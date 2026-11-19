@@ -20,6 +20,11 @@ def log(*a):
 
 
 FIELDS = {
+    'say': ('the normal beat, one per phrase: the words build as they are said. big: "DISCOUNT" | ["TAYADA", "QIIMAHA"] | '
+            '[{"text": "16$", "on": "lix iyo toban doolar"}] | [{"text": "18$", "strike": true}] (old price); '
+            'visual: {"type": "card", "img": "frame:12.3@x,y,w,h" | "photo.jpg", "label": "Buskud"} | '
+            '{"type": "chips", "items": ["Timir", "Saliid"]} | {"type": "date", "top": "BISHA", "day": "1"} | '
+            '{"type": "icon", "name": "cart|heart|star|tag|clock|bolt|check|play|percent"}; place: auto|behind|above|chest'),
     'word': 'word, line (thin line, ≤4 words), red (the red word of the line), place: auto|behind|above|chest, pill',
     'cards': 'word, cards: [{img: "frame:12.3" | "frame:12.3@x,y,w,h" | "photo.jpg", label, at}] (1–3), place',
     'pills': 'word, items: ["of", "my"] (red pills on their spoken words)',
@@ -49,8 +54,8 @@ def main(argv=None):
         return doctor()
     if a.cmd == 'fx':
         from rk import fx as FX
-        from rk import fx_mask, fx_ui  # noqa: F401 (register)
-        for name, cls in sorted(FX.REG.items()):
+        from rk import fx_mask, fx_ui, fx_say  # noqa: F401 (register)
+        for name, cls in sorted(FX.REG.items(), key=lambda kv: (kv[0] != 'say', kv[0])):
             doc = (cls.__doc__ or '').strip().split('\n')[0]
             need = {'mask': ' [needs the person mask]', 'footage': ' [needs footage]'}.get(cls.need, '')
             log('%-15s%s %s' % (name, need, doc))
@@ -73,10 +78,19 @@ def main(argv=None):
         for n in tr.d.get('notes', []):
             log('  note: ' + n)
         log('person mask: %s · face found in %d of %d samples' % ('yes' if tr.has_mask else 'NO', tr.d['faces'], tr.d['samples']))
-        pl = P.auto(cues, info['dur'], has_mask=tr.has_mask, fmt=fmt, brand=a.brand)
+        # a close-up (the face fills the frame): no room for photo cards around the head, the words carry it
+        closeup = False
+        try:
+            fs = [tr.at(info['dur'] * k / 8)['face'] for k in range(1, 8)]
+            hs = sorted(f[3] - f[1] for f in fs)
+            closeup = hs[len(hs) // 2] > 0.17          # face boxes are 0–1 of the frame
+        except Exception:
+            closeup = False
+        pl = P.auto(P.parse_srt(open(srt, encoding='utf-8', errors='replace').read()), info['dur'], has_mask=tr.has_mask, fmt=fmt, brand=a.brand, closeup=closeup)
         pl = dict({'video': video, 'srt': srt}, **pl)
         P.save(pl, out)
-        log('wrote %s with %d beats. Edit it (key words, effects that fit each line), then: stills → render' % (out, len(pl['beats'])))
+        log('wrote %s with %d beats (one "say" beat per phrase%s). Read every phrase ("say"): fix its big word(s), the visual that shows '
+            'what is said, and the effects that fit; then: check → stills → render' % (out, len(pl['beats']), ', close-up' if closeup else ''))
         return 0
     if a.cmd == 'check':
         pl = P.load(a.args[0])
@@ -86,7 +100,7 @@ def main(argv=None):
         return 0
     if a.cmd in ('stills', 'render'):
         from rk.render import Job
-        from rk import fx_mask, fx_ui  # noqa: F401
+        from rk import fx_mask, fx_ui, fx_say  # noqa: F401
         out = a.out or ('stills' if a.cmd == 'stills' else 'edit.mp4')
         job = Job(a.args[0], out if a.cmd == 'render' else os.path.join(out, 'x.mp4'), log=log)
         if a.cmd == 'stills':

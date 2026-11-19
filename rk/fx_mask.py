@@ -644,7 +644,8 @@ class CoverStory(Beat):
         img = np.ones((bc.shape[0] + 12, bc.shape[1] + 12, 3), np.float32)
         img[6:-6, 6:-6][bc > 0] = 0.08
         self.barcode = np.concatenate([img, np.ones(img.shape[:2] + (1,), np.float32)], 2)
-        ln = self.line or self.spec.get('say') or ''
+        # with captions on, the spoken words are already at the bottom: no second copy in serif
+        ln = self.line or ('' if self.ctx.plan.get('captions', True) else self.spec.get('say') or '')
         self.serif = [text_spr(w, 'serif_i', 6.4 * u, '#FFFFFF') for w in ln.split()[:6]]
 
     def bg(self, ctx, B, t):

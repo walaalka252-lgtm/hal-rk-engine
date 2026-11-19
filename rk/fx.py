@@ -79,6 +79,16 @@ def img_from(ctx, ref, t_default, box=None):
     return F
 
 
+def bg_score(ctx, at, aspect):
+    """How good the best room crop of this shape is (0 = nothing to see)."""
+    key = (round(float(at), 2), aspect)
+    cache = ctx.__dict__.setdefault('_bgcrop', {})
+    if key not in cache:
+        cache[key] = _bg_regions(ctx, at, aspect)
+    sc = ctx.__dict__.setdefault('_bgscore', {})
+    return sc.get(key, 0.0)
+
+
 def bg_crop(ctx, at, which=0, aspect=None):
     """The most interesting region of the frame at `at` that shows only the room (no person): product / room shots.
     Scores every window (integral images) by how much there is to see in it (colour + detail, not white walls), away
@@ -111,7 +121,9 @@ def _bg_regions(ctx, at, aspect):
     colc = cv2.resize(col, (gw, gh), interpolation=cv2.INTER_AREA)
     # local contrast (a flat or plain white wall has none)
     lc = cv2.resize(np.abs(g - cv2.blur(g, (9, 9))), (gw, gh), interpolation=cv2.INTER_AREA) / 40.0
-    tex = 0.55 * edge + 1.3 * np.clip(colc * 2.2, 0, 1.2) + 0.5 * np.clip(lc, 0, 1)
+    # plain white wall / empty shelf: nothing to see
+    white = cv2.resize(((val > 0.8) & (sat < 0.13)).astype(np.float32), (gw, gh), interpolation=cv2.INTER_AREA)
+    tex = 0.35 * edge + 1.6 * np.clip(colc * 2.4, 0, 1.25) + 0.4 * np.clip(lc, 0, 1) - 0.55 * white
     k = max(3, int(0.035 * W)) | 1
     busy = cv2.dilate((A > 0.15).astype(np.uint8), np.ones((k, k), np.uint8)).astype(np.float32)
     busy = cv2.resize(busy, (gw, gh), interpolation=cv2.INTER_AREA)
@@ -133,7 +145,7 @@ def _bg_regions(ctx, at, aspect):
             if not ok.any():
                 continue
             # density of detail, with a gentle preference for bigger windows (sharper, more context)
-            sc = np.where(ok, Ts / area * (area / (gw * gh)) ** 0.22 / (hk if hk > 1 else 1 / hk) ** 0.3, -1).ravel()
+            sc = np.where(ok & (Ts > 0), Ts / area * (area / (gw * gh)) ** 0.22 / (hk if hk > 1 else 1 / hk) ** 0.3, -1).ravel()
             m = min(24, sc.size)
             idx = np.argpartition(-sc, m - 1)[:m]
             ncol = Ts.shape[1]
@@ -158,6 +170,7 @@ def _bg_regions(ctx, at, aspect):
     if picks:
         top = picks[0][0]
         picks = [p for p in picks if p[0] >= 0.45 * top] or picks[:1]
+    ctx.__dict__.setdefault('_bgscore', {})[(round(float(at), 2), aspect)] = picks[0][0] if picks else 0.0
     return [[ix / gw, iy / gh, wc / gw, hc / gh] for _, ix, iy, wc, hc in picks]
 
 
@@ -863,4 +876,4 @@ class Split(Beat, WordMixin):
         return []
 
 
-from . import fx_mask, fx_ui  # noqa: E402,F401  (register the effect library)
+from . import fx_mask, fx_ui, fx_say  # noqa: E402,F401  (register the effect library and the phrase lockup)

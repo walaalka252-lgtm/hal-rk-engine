@@ -320,6 +320,8 @@ class Job:
         self.dur = float(pl.get('duration') or self.info['dur'])
         srt = self._path(pl.get('srt'))
         self.cues = P.parse_srt(open(srt, encoding='utf-8', errors='replace').read()) if srt and os.path.exists(srt) else []
+        # what is said together (a word-by-word SRT becomes phrases too)
+        self.phrases = P.phrases(self.cues) if self.cues else []
         self.work = os.path.splitext(os.path.abspath(out))[0] + '.rkwork'
         os.makedirs(self.work, exist_ok=True)
         tp = os.path.join(self.work, 'track.json')
@@ -340,6 +342,7 @@ class Job:
                 log('  note: person mask unavailable (%s): effects that need it fall back' % e)
         self.ctx = Ctx(self.src, self.info, self.W, self.H, self.fps, self.track, self.cues, pl, self.work, seg)
         ctx = self.ctx
+        ctx.phrases = self.phrases
         # beats
         self.beats = []
         for i, b in enumerate(pl.get('beats', [])):
@@ -357,7 +360,7 @@ class Job:
             fast += ks
             if ks or b.full_frame:
                 avoid.append((b.t0 - 0.5, b.t1 + 0.5))
-        ctx.cam = Camera(slow_keys(self.cues, self.dur, avoid) if pl.get('camera', 'auto') == 'auto' else [], fast)
+        ctx.cam = Camera(slow_keys(self.phrases or self.cues, self.dur, avoid) if pl.get('camera', 'auto') == 'auto' else [], fast)
         # every beat lays itself out once (needs the camera for face positions)
         for b in self.beats:
             try:
@@ -368,9 +371,13 @@ class Job:
                 log('  beat %d (%s) failed to prepare: %s' % (b.idx + 1, b.spec.get('fx'), e))
                 b.on = lambda t: False
         # captions
-        if pl.get('captions', True) and self.cues:
-            ctx.caps = L.Captions(self.cues, self.W, self.H, y=ctx.cap_y)
+        # captions: on by default; a lockup on screen is the subtitle itself ("captions": "always" shows both)
+        cap_mode = pl.get('captions', True)
+        if cap_mode and self.cues:
+            ctx.caps = L.Captions(self.phrases or self.cues, self.W, self.H, y=ctx.cap_y)
             for b in self.beats:
+                if cap_mode == 'always' and type(b).__name__ == 'Say':
+                    continue
                 for a, z in b.hide_captions():
                     ctx.caps.hide(a, z)
         # transitions + sounds
